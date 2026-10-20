@@ -1,5 +1,8 @@
 # Overleaf Workshop 国内版（默认连接 cn.overleaf.com）
 
+[![reproduce](https://github.com/Niobium-41-nb/overleaf-workshop-cn/actions/workflows/reproduce.yml/badge.svg)](https://github.com/Niobium-41-nb/overleaf-workshop-cn/actions/workflows/reproduce.yml)
+[![license: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
 把 VS Code 扩展 [`iamhyc.overleaf-workshop`](https://marketplace.visualstudio.com/items?itemName=iamhyc.overleaf-workshop)
 的默认服务器从 `https://www.overleaf.com` 改为 `https://cn.overleaf.com`，方便国内直连。
 
