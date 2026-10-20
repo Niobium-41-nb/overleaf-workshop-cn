@@ -85,13 +85,39 @@ async function main() {
   console.log(`pristine tree: ${path.relative(repo, backupDir)}`);
   console.log(`patched tree:  ${path.relative(repo, extensionDir)}`);
 
-  run('git', ['-c', 'core.autocrlf=false', 'apply', '--check', patchPath], extensionDir);
-  run('git', ['-c', 'core.autocrlf=false', 'apply', patchPath], extensionDir);
+  // Apply from the repository root with an explicit prefix: `git apply` resolves
+  // paths against the enclosing work tree, so running it inside extension/ would
+  // silently patch files at the repo root instead (and leave extension/ pristine).
+  const applyArgs = ['-c', 'core.autocrlf=false', 'apply', '--directory=extension'];
+  run('git', [...applyArgs, '--check', patchPath], repo);
+  run('git', [...applyArgs, patchPath], repo);
   console.log('patch applied: patches/overleaf-workshop-cn-default-host.patch');
+
+  assertPatched();
 
   const pkg = JSON.parse(fs.readFileSync(path.join(extensionDir, 'package.json'), 'utf8'));
   console.log(`\nready: ${pkg.publisher}.${pkg.name}@${pkg.version}`);
   console.log('next:  & .\\tools\\build-vsix.ps1    # -> overleaf-workshop-cn-<version>.vsix');
+}
+
+/**
+ * Fail loudly if the patch did not land inside extension/. A no-op apply is the
+ * dangerous failure mode: the build would happily package the upstream default.
+ */
+function assertPatched() {
+  const read = (relative) => fs.readFileSync(path.join(extensionDir, relative), 'utf8');
+  if (!read('out/utils/globalStateManager.js').includes("const DEFAULT_SERVER_ORIGIN = 'https://cn.overleaf.com';")) {
+    throw new Error('patch verification failed: extension/out/utils/globalStateManager.js still has the upstream default host');
+  }
+  if (!read('l10n/bundle.l10n.json').includes('https://cn.overleaf.com')) {
+    throw new Error('patch verification failed: l10n/bundle.l10n.json was not updated');
+  }
+  const upstreamVersion = JSON.parse(fs.readFileSync(path.join(backupDir, 'package.json'), 'utf8')).version;
+  const patchedVersion = JSON.parse(read('package.json')).version;
+  if (patchedVersion === upstreamVersion) {
+    throw new Error(`patch verification failed: version was not bumped (still ${patchedVersion})`);
+  }
+  console.log(`patch verification ok: ${upstreamVersion} -> ${patchedVersion}`);
 }
 
 async function download(url, destination) {
