@@ -1,0 +1,186 @@
+diff --git a/README.md b/README.md
+index 17f1326..1f73faf 100644
+--- a/README.md
++++ b/README.md
+@@ -7,6 +7,13 @@
+ 
+ Open Overleaf (ShareLatex) projects in VSCode, with full collaboration support.
+ 
++> [!IMPORTANT]
++> **国内版 / CN build (local patch, unofficial)**
++> This build defaults to the China-facing instance `https://cn.overleaf.com` instead of `https://www.overleaf.com`.
++> Compared with upstream `iamhyc.overleaf-workshop@0.15.10` it only differs in the default host, the hosts that offer
++> cookie-only login, and the one-time seeding/migration of that default host (existing hosts and sessions are kept);
++> see `PATCH-NOTES.md` in the fork checkout. Other instances can still be added via "Add New Server".
++
+ ### User Guide
+ 
+ The full user guide is available at [GitHub Wiki](https://github.com/overleaf-workshop/Overleaf-Workshop/wiki).
+@@ -14,7 +21,7 @@ The full user guide is available at [GitHub Wiki](https://github.com/overleaf-wo
+ ### Features
+ 
+ > [!NOTE]
+-> For SSO login or captcha enabled servers like `https://www.overleaf.com`, please use "**Login with Cookies**" method.
++> For SSO login or captcha enabled servers like `https://cn.overleaf.com`, please use "**Login with Cookies**" method.
+ > For more details, please refer to [How to Login with Cookies](#how-to-login-with-cookies).
+ 
+ - Login Server, Open Projects and Edit Files
+@@ -46,7 +53,7 @@ In an already logged-in browser (Firefox for example):
+ 
+ 1. Open "Developer Tools" (usually by pressing <kbd>F12</kbd>) and switch to the "Network" tab;
+ 
+-   Then, navigate to the Overleaf main page (e.g., `https://www.overleaf.com`) in the address bar.
++   Then, navigate to the Overleaf main page (e.g., `https://cn.overleaf.com`) in the address bar.
+ 
+ 2. Filter the listed items with `/project` and select the exact match.
+ 
+diff --git a/l10n/bundle.l10n.json b/l10n/bundle.l10n.json
+index 7132f67..8abce06 100644
+--- a/l10n/bundle.l10n.json
++++ b/l10n/bundle.l10n.json
+@@ -48,7 +48,7 @@
+   "A file or folder with this name already exists": "A file or folder with this name already exists",
+   "URL to fetch the file from": "URL to fetch the file from",
+   "Cannot rename across servers": "Cannot rename across servers",
+-  "Overleaf server address, e.g. \"https://www.overleaf.com\"": "Overleaf server address, e.g. \"https://www.overleaf.com\"",
++  "Overleaf server address, e.g. \"https://cn.overleaf.com\"": "Overleaf server address, e.g. \"https://cn.overleaf.com\"",
+   "Invalid protocol.": "Invalid protocol.",
+   "Invalid server address.": "Invalid server address.",
+   "Remove server \"{name}\" ?": "Remove server \"{name}\" ?",
+diff --git a/out/core/projectManagerProvider.js b/out/core/projectManagerProvider.js
+index 6e899a3..9f60731 100644
+--- a/out/core/projectManagerProvider.js
++++ b/out/core/projectManagerProvider.js
+@@ -6,6 +6,12 @@ const consts_1 = require("../consts");
+ const globalStateManager_1 = require("../utils/globalStateManager");
+ const remoteFileSystemProvider_1 = require("./remoteFileSystemProvider");
+ const localReplicaSCM_1 = require("../scm/localReplicaSCM");
++// Hosts whose login form is captcha-gated (invisible reCAPTCHA) or SSO-only.
++// Password-based login cannot complete there, so only cookie login is offered.
++const captchaOnlyHosts = ['www.overleaf.com', 'cn.overleaf.com'];
++function requiresCookieLogin(host) {
++    return captchaOnlyHosts.includes(host);
++}
+ class DataItem extends vscode.TreeItem {
+     constructor(label, collapsibleState) {
+         super(label, collapsibleState);
+@@ -161,7 +167,7 @@ class ProjectManagerProvider {
+         }
+     }
+     addServer() {
+-        vscode.window.showInputBox({ 'placeHolder': vscode.l10n.t('Overleaf server address, e.g. "https://www.overleaf.com"') })
++        vscode.window.showInputBox({ 'placeHolder': vscode.l10n.t('Overleaf server address, e.g. "https://cn.overleaf.com"') })
+             .then((url) => {
+             if (url) {
+                 try {
+@@ -228,8 +234,8 @@ class ProjectManagerProvider {
+                 });
+             },
+         };
+-        //NOTE: temporarily disable password-based login for `www.overleaf.com`
+-        if (server.name === 'www.overleaf.com') {
++        //NOTE: password-based login is unavailable on captcha/SSO protected hosts
++        if (requiresCookieLogin(server.name)) {
+             delete loginMethods['Login with Password'];
+         }
+         vscode.window.showQuickPick(Object.keys(loginMethods), {
+diff --git a/out/utils/globalStateManager.js b/out/utils/globalStateManager.js
+index cadfc27..f2d5070 100644
+--- a/out/utils/globalStateManager.js
++++ b/out/utils/globalStateManager.js
+@@ -7,23 +7,63 @@ const socketio_1 = require("../api/socketio");
+ const extendedBase_1 = require("../api/extendedBase");
+ const keyServerPersists = 'overleaf-servers';
+ const keyPdfViewPersists = 'overleaf-pdf-viewers';
++const keyDefaultServerRemoved = 'overleaf-default-server-removed';
++// Built-in default host. This CN build points at the China-facing mirror
++// instead of `https://www.overleaf.com` (see PATCH-NOTES.md).
++const DEFAULT_SERVER_ORIGIN = 'https://cn.overleaf.com';
++const DEFAULT_SERVER_HOST = new URL(DEFAULT_SERVER_ORIGIN).host;
++// Host name seeded by the upstream build before this fork existed.
++const LEGACY_DEFAULT_SERVER_HOST = 'www.overleaf.com';
+ class GlobalStateManager {
+     static getServers(context) {
+         const persists = context.globalState.get(keyServerPersists, {});
+-        const servers = Object.values(persists).map(persist => {
++        this.migrateLegacyDefaultServer(context, persists);
++        if (this.ensureDefaultServer(context, persists)) {
++            return this.getServers(context);
++        }
++        return Object.values(persists).map(persist => {
+             return {
+                 server: persist,
+                 api: new base_1.BaseAPI(persist.url),
+             };
+         });
+-        if (servers.length === 0) {
+-            const url = new URL('https://www.overleaf.com');
+-            this.addServer(context, url.host, url.href);
+-            return this.getServers(context);
++    }
++    /**
++     * Seed the built-in default host for installs that predate it or that never
++     * had it, without disturbing existing hosts. A user who removed the default
++     * explicitly is not overridden (keyDefaultServerRemoved).
++     */
++    static ensureDefaultServer(context, persists) {
++        if (persists[DEFAULT_SERVER_HOST] !== undefined) {
++            return false;
+         }
+-        else {
+-            return servers;
++        if (context.globalState.get(keyDefaultServerRemoved, false) === true) {
++            return false;
+         }
++        const url = new URL(DEFAULT_SERVER_ORIGIN);
++        return this.addServer(context, url.host, url.href);
++    }
++    /**
++     * One-time retarget of the untouched upstream default host.
++     * Only a lone `www.overleaf.com` entry that was never logged in is moved, so
++     * an existing session, or a hand-curated host list, is never rewritten.
++     */
++    static migrateLegacyDefaultServer(context, persists) {
++        const legacy = persists[LEGACY_DEFAULT_SERVER_HOST];
++        if (legacy === undefined || legacy.login !== undefined) {
++            return false;
++        }
++        if (Object.keys(persists).length !== 1) {
++            return false;
++        }
++        const url = new URL(DEFAULT_SERVER_ORIGIN);
++        if (url.host === LEGACY_DEFAULT_SERVER_HOST) {
++            return false;
++        }
++        delete persists[LEGACY_DEFAULT_SERVER_HOST];
++        persists[url.host] = { name: url.host, url: url.href };
++        context.globalState.update(keyServerPersists, persists);
++        return true;
+     }
+     static addServer(context, name, url) {
+         const persists = context.globalState.get(keyServerPersists, {});
+@@ -40,6 +80,11 @@ class GlobalStateManager {
+         const persists = context.globalState.get(keyServerPersists, {});
+         if (persists[name] !== undefined) {
+             delete persists[name];
++            // Remember an explicit removal of the built-in default so that
++            // ensureDefaultServer() does not resurrect it on the next refresh.
++            if (name === DEFAULT_SERVER_HOST) {
++                context.globalState.update(keyDefaultServerRemoved, true);
++            }
+             context.globalState.update(keyServerPersists, persists);
+             return true;
+         }
+diff --git a/package.json b/package.json
+index 9de7641..11adc85 100644
+--- a/package.json
++++ b/package.json
+@@ -2,7 +2,7 @@
+   "name": "overleaf-workshop",
+   "displayName": "%extension.displayName%",
+   "description": "%extension.description%",
+-  "version": "0.15.10",
++  "version": "0.15.11",
+   "icon": "resources/icons/app_icon.png",
+   "author": {
+     "name": "iamhyc",

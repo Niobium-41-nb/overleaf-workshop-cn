@@ -1,0 +1,11 @@
+# Generated build inputs / outputs — recreate with `node tools/fetch-upstream.mjs` and `tools/build-vsix.ps1`.
+/build/
+/extension/
+/backup/
+/upstream/
+
+# Packaged builds are produced locally, never committed.
+*.vsix
+*.download
+
+node_modules/

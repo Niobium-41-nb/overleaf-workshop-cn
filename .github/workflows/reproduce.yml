@@ -1,0 +1,30 @@
+name: reproduce
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  patch-and-verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch upstream VSIX (pinned SHA-256) and apply the CN patch
+        shell: pwsh
+        run: node tools/fetch-upstream.mjs
+
+      - name: Verify the patched extension modules
+        shell: pwsh
+        run: node tools/verify.cjs extension
+
+      - name: Package the VSIX
+        shell: pwsh
+        run: ./tools/build-vsix.ps1

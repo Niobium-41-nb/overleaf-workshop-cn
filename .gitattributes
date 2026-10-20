@@ -1,0 +1,9 @@
+# Keep the working tree byte-stable: the patch in patches/ is a byte-exact
+# record of the CN changes and must apply to a pristine upstream tree.
+* text=auto eol=lf
+
+*.vsix binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
